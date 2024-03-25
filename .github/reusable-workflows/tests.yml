@@ -1,0 +1,156 @@
+#
+# how to use:
+# the with-db is only a shortcut to use the default value of db
+# with db the real matrix could be customized if necessary. with-db is still necessary to be compliant with with-node.
+# with-db does not have an effect now if db is customized, but it could have in the future, therefore it is better to be explicit for now
+
+
+# example
+#
+# name: CI
+#
+# on:
+#   push:
+#     branches: main
+#   pull_request:
+#     branches: main
+#   schedule:
+#     - cron: "0 3 * * 6"
+#   workflow_dispatch:
+#     inputs:
+#       reason:
+#         description: "Reason"
+#         required: false
+#         default: "Manual trigger"
+# jobs:
+#   tests:
+#     uses: inveniosoftware/.github/.github/reusable-workflows/tests.yml@main
+#       with-db: true
+#       with-search: true
+
+
+
+name: CI
+
+on:
+  workflow_call:
+    inputs:
+      with-db:
+        required: false
+        default: false
+        type: boolean
+      with-search:
+        required: false
+        default: false
+        type: boolean
+      with-node:
+        required: false
+        default: false
+        type: boolean
+      python-version:
+        required: false
+        default: "3.9,3.12"
+        type: string
+      db:
+        required: false
+        default: "postgresql14,mysql8"
+        type: string
+      search:
+        reqired: false
+        default: "opensearch2"
+        type: string
+      node:
+        required: false
+        default: "18.x,20.x"
+        type: string
+
+
+jobs:
+  intermediate-step:
+    runs-on: ubuntu-latest
+
+    outputs:
+      python-versions: ${{ steps.split.outputs.python-versions}}
+      dbs: ${{ steps.split.outputs.dbs }}
+      searchs: ${{ steps.split.outputs.searchs }}
+      nodes: ${{ steps.split.outputs.nodes }}
+      package-name: ${{ steps.}}
+
+    steps:
+      - name: split db
+        id: split
+        run: echo ":set-output name=python-versions::$(echo '${{ inputs.python-version }}' | jq -R 'split(",")')"
+        run: echo ":set-output name=dbs::$(echo '${{ inputs.db }}' | jq -R 'split(",")')"
+        run: echo ":set-output name=dbs::$(echo '${{ inputs.search }}' | jq -R 'split(",")')"
+        run: echo ":set-output name=nodes::$(echo '${{ inputs.node }}' | jq -R 'split(",")')"
+        shell: bash
+      - name: directory name
+        id: dir-name
+        run: echo "TODO"
+        shell: bash
+
+
+  backend-tests:
+    needs: intermediate-step
+    runs-on: ubuntu-latest
+    name: Test (Python ${{matrix.python-version}})
+    strategy:
+      matrix:
+        fail-fast: false
+        python-version: ${{ (inputs.python-versions)}}
+        db-service: ${{ (inputs.with-db && needs.intermediate-step.outputs.dbs) || [] }}
+        search-service: ${{ (inputs.with-search && needs.intermediate-step.outputs.searchs) || [] }}
+
+    env:
+      DB: ${{ matrix.db-service }}
+      SEARCH: ${{ matrix.search-service }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: setup.cfg
+
+      - name: Install dependencies
+        run: |
+          pip install .[$EXTRAS]
+          pip freeze
+
+      - name: Run tests
+        run: ./run-tests.sh
+
+  frontend-tests:
+    if: inputs.with-node
+    needs: intermediate-step
+    runs-on: ubuntu-latest
+    name: Use Node.js ${{ matrix.node-version }}
+    strategy:
+      matrix:
+        fail-fast: false
+        node-version: ${{ (inputs.with-node && needs.intermediate-step.outputs.nodes) || [] }}
+
+    steps:
+      - name: Set up Node ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Run eslint test
+        run: ./run-js-linter.sh -i
+
+      - name: Install deps for frontend tests
+        working-directory: ./${{needs.intermediate-step.outputs.package-name}}/assets/semantic-ui/js/${{needs.intermediate-step.outputs.package-name}}
+        run: npm install
+
+      - name: Install deps for frontend tests - translations
+        working-directory: ./${{needs.intermediate-step.outputs.package-name}}/assets/semantic-ui/translations/${{needs.intermediate-step.outputs.package-name}}
+        run: npm install
+
+      - name: Run frontend tests
+        working-directory: ./${{needs.intermediate-step.outputs.package-name}}/assets/semantic-ui/js/${{needs.intermediate-step.outputs.package-name}}
+        run: npm test
